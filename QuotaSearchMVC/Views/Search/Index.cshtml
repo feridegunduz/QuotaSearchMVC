@@ -1,0 +1,89 @@
+﻿@{
+    ViewData["Title"] = "Search";
+}
+
+<h2>Arama</h2>
+
+<div class="input-group mb-3">
+    <input type="text" id="query" class="form-control" placeholder="Arama yap..." />
+    <button id="searchBtn" class="btn btn-primary">Ara</button>
+</div>
+
+<h3>Sonuçlar:</h3>
+<ul id="result" class="list-group mb-3"></ul>
+
+<h3>Kalan Haklar:</h3>
+<div class="mb-3">
+    <div id="usage">
+        <span id="dayBadge" class="badge bg-success me-2">📅 Günlük: 5/5</span>
+        <span id="monthBadge" class="badge bg-success">📆 Aylık: 20/20</span>
+    </div>
+</div>
+
+<div id="alertContainer"></div>
+
+@section Scripts {
+    <script>
+        const searchBtn = document.getElementById("searchBtn");
+        const queryInput = document.getElementById("query");
+        const resultUl = document.getElementById("result");
+        const dayBadge = document.getElementById("dayBadge");
+        const monthBadge = document.getElementById("monthBadge");
+        const alertContainer = document.getElementById("alertContainer");
+
+        function showAlert(message, type="danger") {
+            alertContainer.innerHTML = `<div class="alert alert-${type} alert-dismissible fade show" role="alert">
+                ${message}
+                <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+            </div>`;
+        }
+
+        searchBtn.addEventListener("click", async () => {
+            const query = queryInput.value.trim();
+            if (!query) return;
+
+            try {
+                const response = await fetch("/Search/Query", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+                    body: "query=" + encodeURIComponent(query)
+                });
+
+                const data = await response.json();
+
+                // Limit dolduysa
+                if (response.status === 429) {
+                    showAlert(data.message || "Limit doldu!");
+                }
+
+                // Sonuçları listele
+                resultUl.innerHTML = "";
+                if (data.results && data.results.length > 0) {
+                    data.results.forEach(r => {
+                        const li = document.createElement("li");
+                        li.className = "list-group-item";
+                        li.innerText = r;
+                        resultUl.appendChild(li);
+                    });
+                } else {
+                    resultUl.innerHTML = "<li class='list-group-item'>Sonuç bulunamadı</li>";
+                }
+
+                // Hakları güncelle ve badge rengini değiştir
+                if (data.usage) {
+                    dayBadge.innerText = `📅 Günlük: ${data.usage.dayRemaining}/5`;
+                    monthBadge.innerText = `📆 Aylık: ${data.usage.monthRemaining}/20`;
+
+                    dayBadge.className = "badge me-2 " + (data.usage.dayRemaining === 0 ? "bg-danger" : "bg-success");
+                    monthBadge.className = "badge " + (data.usage.monthRemaining === 0 ? "bg-danger" : "bg-success");
+
+                    searchBtn.disabled = data.usage.dayRemaining === 0 || data.usage.monthRemaining === 0;
+                }
+
+            } catch (err) {
+                console.error("Arama hatası:", err);
+                showAlert("Sunucu hatası, tekrar deneyin.");
+            }
+        });
+    </script>
+}
