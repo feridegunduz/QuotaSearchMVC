@@ -17,15 +17,15 @@ namespace QuotaSearchMVC.Services
             _context = context;
         }
 
-        public async Task<(bool success, UsageInfo usage)> TryConsumeAsync(string userId, string query)
+        // Arama sorgusunu çalıştır ve limitleri uygula
+        public async Task<QuotaConsumeResult> TryConsumeAsync(string userId, string query)
         {
             if (string.IsNullOrWhiteSpace(userId))
                 throw new ArgumentNullException(nameof(userId));
 
             var utcNow = DateTime.UtcNow;
-
-            // İstanbul lokal pencerelerini hesapla
             var localNow = utcNow + _tzOffset;
+
             var dayStartLocal = new DateTime(localNow.Year, localNow.Month, localNow.Day, 0, 0, 0);
             var dayEndLocal = dayStartLocal.AddDays(1);
             var monthStartLocal = new DateTime(localNow.Year, localNow.Month, 1, 0, 0, 0);
@@ -36,7 +36,6 @@ namespace QuotaSearchMVC.Services
             var monthStartUtc = monthStartLocal - _tzOffset;
             var monthEndUtc = monthEndLocal - _tzOffset;
 
-            // Transaction içinde say ve ekle (basit ama etkili)
             using var tx = await _context.Database.BeginTransactionAsync();
 
             var dailyCount = await _context.QueryLogs
@@ -50,24 +49,33 @@ namespace QuotaSearchMVC.Services
             if (dailyCount >= DailyLimit)
             {
                 await tx.RollbackAsync();
-                return (false, new UsageInfo
+                return new QuotaConsumeResult
                 {
-                    DayRemaining = 0,
-                    MonthRemaining = Math.Max(0, MonthlyLimit - monthlyCount)
-                });
+                    Success = false,
+                    Usage = new UsageInfo
+                    {
+                        DayRemaining = 0,
+                        MonthRemaining = Math.Max(0, MonthlyLimit - monthlyCount)
+                    },
+                    ErrorMessage = "Günlük limit aşıldı."
+                };
             }
 
             if (monthlyCount >= MonthlyLimit)
             {
                 await tx.RollbackAsync();
-                return (false, new UsageInfo
+                return new QuotaConsumeResult
                 {
-                    DayRemaining = Math.Max(0, DailyLimit - dailyCount),
-                    MonthRemaining = 0
-                });
+                    Success = false,
+                    Usage = new UsageInfo
+                    {
+                        DayRemaining = Math.Max(0, DailyLimit - dailyCount),
+                        MonthRemaining = 0
+                    },
+                    ErrorMessage = "Aylık limit aşıldı."
+                };
             }
 
-            // log ekle — CreatedAtUtc kesin olarak ayarlanıyor
             var log = new QueryLog
             {
                 UserId = userId,
@@ -79,11 +87,51 @@ namespace QuotaSearchMVC.Services
             await _context.SaveChangesAsync();
             await tx.CommitAsync();
 
-            return (true, new UsageInfo
+            return new QuotaConsumeResult
             {
-                DayRemaining = Math.Max(0, DailyLimit - (dailyCount + 1)),
-                MonthRemaining = Math.Max(0, MonthlyLimit - (monthlyCount + 1))
-            });
+                Success = true,
+                Usage = new UsageInfo
+                {
+                    DayRemaining = Math.Max(0, DailyLimit - (dailyCount + 1)),
+                    MonthRemaining = Math.Max(0, MonthlyLimit - (monthlyCount + 1))
+                }
+            };
         }
+
+        // Kullanım bilgilerini döndür
+        public async Task<UsageInfoExtended> GetUsageAsync(string userId)
+        {
+            var utcNow = DateTime.UtcNow;
+            var localNow = utcNow + _tzOffset;
+
+            var dayStartLocal = new DateTime(localNow.Year, localNow.Month, localNow.Day, 0, 0, 0);
+            var monthStartLocal = new DateTime(localNow.Year, localNow.Month, 1, 0, 0, 0);
+
+            var dayStartUtc = dayStartLocal - _tzOffset;
+            var monthStartUtc = monthStartLocal - _tzOffset;
+
+            var dailyCount = await _context.QueryLogs
+                .Where(q => q.UserId == userId && q.CreatedAtUtc >= dayStartUtc)
+                .CountAsync();
+
+            var monthlyCount = await _context.QueryLogs
+                .Where(q => q.UserId == userId && q.CreatedAtUtc >= monthStartUtc)
+                .CountAsync();
+
+            return new UsageInfoExtended
+            {
+                DayRemaining = Math.Max(0, DailyLimit - dailyCount),
+                MonthRemaining = Math.Max(0, MonthlyLimit - monthlyCount),
+                DayResetAt = dayStartLocal.AddDays(1),
+                MonthResetAt = monthStartLocal.AddMonths(1)
+            };
+        }
+    }
+
+    // Extended UsageInfo, reset zamanları ile birlikte
+    public class UsageInfoExtended : UsageInfo
+    {
+        public DateTime DayResetAt { get; set; }
+        public DateTime MonthResetAt { get; set; }
     }
 }

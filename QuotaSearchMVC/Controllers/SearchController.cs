@@ -3,10 +3,12 @@ using Microsoft.AspNetCore.Mvc;
 using QuotaSearchMVC.Services;
 using System.Security.Claims;
 
-namespace QuotaSearchMVC.Controllers
+namespace QuotaSearchMVC.Controllers.Api
 {
+    [Route("api/[controller]")]
+    [ApiController]
     [Authorize]
-    public class SearchController : Controller
+    public class SearchController : ControllerBase
     {
         private readonly IQuotaService _quotaService;
 
@@ -15,73 +17,85 @@ namespace QuotaSearchMVC.Controllers
             _quotaService = quotaService;
         }
 
-        public IActionResult Index()
+        public class SearchRequest
         {
-            return View();
+            public string Term { get; set; } = string.Empty;
         }
 
         [HttpPost]
-        [IgnoreAntiforgeryToken]
-        public async Task<IActionResult> Query(string query)
+public async Task<IActionResult> Post([FromBody] SearchRequest request)
+{
+    if (string.IsNullOrWhiteSpace(request.Term))
+        return BadRequest(new { message = "Boş arama girdisi" });
+
+    var userId = User.FindFirstValue(ClaimTypes.NameIdentifier);
+    var result = await _quotaService.TryConsumeAsync(userId, request.Term);
+
+    // Header ekleme
+    Response.Headers["X-RateLimit-Limit-Day"] = "5";
+    Response.Headers["X-RateLimit-Remaining-Day"] = result.Usage.DayRemaining.ToString();
+    Response.Headers["X-RateLimit-Limit-Month"] = "20";
+    Response.Headers["X-RateLimit-Remaining-Month"] = result.Usage.MonthRemaining.ToString();
+
+    if (!result.Success)
+    {
+        string code, message;
+
+        if (result.Usage.DayRemaining == 0 && result.Usage.MonthRemaining == 0)
         {
-            try
-            {
-                if (string.IsNullOrWhiteSpace(query))
-                {
-                    return Json(new { message = "Boş arama girdisi" });
-                }
-
-                var userId = User.FindFirstValue(ClaimTypes.NameIdentifier);
-
-                var (success, usage) = await _quotaService.TryConsumeAsync(userId, query);
-
-                if (!success)
-                {
-                    return StatusCode(429, new
-                    {
-                        success = false,
-                        message = "Günlük veya aylık limitiniz dolmuştur!",
-                        usage = new
-                        {
-                            dayRemaining = usage.DayRemaining,
-                            monthRemaining = usage.MonthRemaining
-                        }
-                    });
-                }
-
-
-                var dummyResults = new List<string>
+            code = "BOTH_LIMITS_EXCEEDED";
+            message = "Günlük ve aylık limitleriniz dolmuştur.";
+        }
+        else if (result.Usage.DayRemaining == 0)
         {
-            $"Sonuç 1: {query} hakkında bilgi.",
-            $"Sonuç 2: {query} resimleri.",
-            $"Sonuç 3: {query} makaleleri.",
-            $"Sonuç 4: {query} videoları.",
-            $"Sonuç 5: {query} forum tartışmaları."
-        };
-
-                return Json(new
-                {
-                    success = true,  // <-- Bunu ekledik
-                    results = dummyResults,
-                    usage = new
-                    {
-                        dayRemaining = usage.DayRemaining,
-                        monthRemaining = usage.MonthRemaining
-                    }
-                });
-
-            }
-            catch (Exception ex)
-            {
-                return Json(new
-                {
-                    message = "Sunucu hatası",
-                    error = ex.InnerException?.Message ?? ex.Message
-                });
-            }
-
-
+            code = "DAILY_LIMIT_EXCEEDED";
+            message = "Günlük limitiniz dolmuştur.";
+        }
+        else if (result.Usage.MonthRemaining == 0)
+        {
+            code = "MONTHLY_LIMIT_EXCEEDED";
+            message = "Aylık limitiniz dolmuştur.";
+        }
+        else
+        {
+            code = "LIMIT_EXCEEDED";
+            message = "Limitiniz dolmuştur.";
         }
 
+        return StatusCode(429, new { code, message });
+    }
+
+    // Dummy sonuçlar
+    var items = new List<string>
+    {
+        $"Sonuç 1: {request.Term} hakkında bilgi.",
+        $"Sonuç 2: {request.Term} resimleri.",
+        $"Sonuç 3: {request.Term} makaleleri."
+    };
+
+    return Ok(new { items, usage = new { dayRemaining = result.Usage.DayRemaining, monthRemaining = result.Usage.MonthRemaining } });
+}
+
+
+        [HttpGet("/api/usage")]
+        public async Task<IActionResult> GetUsage()
+        {
+            var userId = User.FindFirstValue(ClaimTypes.NameIdentifier);
+
+            var usage = await _quotaService.GetUsageAsync(userId);
+
+            return Ok(new
+            {
+                dayUsed = 5 - usage.DayRemaining,
+                dayRemaining = usage.DayRemaining,
+                monthUsed = 20 - usage.MonthRemaining,
+                monthRemaining = usage.MonthRemaining,
+                dayResetAt = usage.DayResetAt,
+                monthResetAt = usage.MonthResetAt
+            });
+        }
     }
 }
+
+
+

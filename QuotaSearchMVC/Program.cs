@@ -1,4 +1,4 @@
-using Microsoft.AspNetCore.Identity;
+ï»¿using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using QuotaSearchMVC.Data;
 using QuotaSearchMVC.Models;
@@ -21,11 +21,19 @@ builder.Services.AddDefaultIdentity<ApplicationUser>(options =>
 // MVC + Razor
 builder.Services.AddControllersWithViews();
 builder.Services.AddRazorPages();
+builder.Services.AddEndpointsApiExplorer();
+builder.Services.AddSwaggerGen();
 
 // QuotaService
 builder.Services.AddScoped<IQuotaService, QuotaService>();
 
 var app = builder.Build();
+
+if (app.Environment.IsDevelopment())
+{
+    app.UseSwagger();
+    app.UseSwaggerUI();
+}
 
 // Middleware
 app.UseHttpsRedirection();
@@ -39,8 +47,8 @@ app.UseAuthorization();
 // MVC route
 app.MapControllerRoute(
     name: "default",
-    pattern: "{controller=Search}/{action=Index}/{id?}");
+    pattern: "{controller=Home}/{action=Index}/{id?}");
 
-app.MapRazorPages(); // Identity UI sayfalarý için þart
+app.MapRazorPages(); // Identity UI sayfalarÃ½ iÃ§in Ã¾art
 
 app.Run();

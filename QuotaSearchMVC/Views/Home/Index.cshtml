@@ -2,6 +2,11 @@
     ViewData["Title"] = "Home Page";
 }
 
-<div class="text-center">
-    <h1 class="display-4">Welcome</h1>
+<div class="d-flex flex-column justify-content-start align-items-center vh-100 pt-5 px-3 text-center">
+    <p class="mb-5">API endpoint’lerini test etmek için Swagger UI’ye gidin:</p>
+
+    @if (User.Identity?.IsAuthenticated ?? false)
+    {
+        <a class="btn btn-primary btn-lg" href="/swagger" target="_blank">Swagger UI</a>
+    }
 </div>
